@@ -53,7 +53,7 @@ local function make_parser(temp_path, gen, list)
   if (not file) then
     return nil, "Cant' open temp file"
   end
-  print(string.format("Writing request to \"%s\"", path))
+  print(string.format("- Writing request to \"%s\"", path))
 
   local form = curl.form()
     :add_content("incluir", "1")
@@ -113,6 +113,7 @@ local function parse_data(temp_path, fun)
   local content = file:read("*all")
   file:close()
 
+  print(string.format("- Parsing data from \"%s\"", temp_path))
   local status, parsed = pcall(function()
     return content:match("<tbody>(.*)</tbody>")
       :gsub("(%s+)<","\n")
@@ -127,6 +128,8 @@ local function parse_data(temp_path, fun)
   for line in parsed:gmatch("[^\n]+") do
     coroutine.resume(parser, line)
   end
+
+  return true
 end
 
 do
@@ -138,11 +141,11 @@ do
   local temp_file = arg[2] or "/tmp/vgm_temp"
 
   local list = {}
-  print("Parsing men data...")
-  parse_data(make_parser(temp_file, 'H', list))
+  print("Requesting men data...")
+  assert(parse_data(make_parser(temp_file, 'H', list)))
 
-  print("Parsing women data...")
-  parse_data(make_parser(temp_file, 'M', list))
+  print("Requesting women data...")
+  assert(parse_data(make_parser(temp_file, 'M', list)))
 
   assert(write_json(out_file, list))
   print(string.format("Parsed %d VGMs!", #list))
