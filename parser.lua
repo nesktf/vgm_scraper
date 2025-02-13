@@ -1,3 +1,4 @@
+local coroutine = require("coroutine")
 local curl = require("cURL")
 local json = require("cjson")
 
@@ -33,6 +34,17 @@ local function read_file(path)
   local content = f:read("*all")
   f:close()
   return content
+end
+
+local function grep_table(str)
+  local status, out = pcall(function()
+    return str
+      :match("<tbody>(.*)</tbody>")
+      :gsub("(%s+)<","\n")
+      :gsub("\n/tr>%s+", "")
+      :gsub("[<+]?[/+]?(t)[r|d](>)","")
+  end)
+  return status and out or nil, out
 end
 
 local function write_json(path, content)
@@ -78,46 +90,50 @@ local function unescape(str)
   str = string.gsub( str, '&amp;', '&' ) -- Be sure to do this after all others
   return str
 end
-
+--
 print("Requesting data...")
 assert(do_request(temp_file))
 
 print("Parsing data...")
-local raw = assert(read_file(temp_file))
-  :match("<tbody>(.*)</tbody>")
-  :gsub("(%s+)<","\n")
-  :gsub("\n/tr>%s+", "")
-  :gsub("[<+]?[/+]?(t)[r|d](>)","")
 
-local enums = {
-  [0] = "DNI",
-  [1] = "Nombre",
-  [2] = "Fuerza",
-  [3] = "Grado",
-  [4] = "Condicion",
-  [5] = "Vive?",
-}
-
-local i = 0
-local list = {}
-local curr
-
-local count = 1
-for line in raw:gmatch("[^\n]+") do
-  if (i == 0) then
-    curr = {}
-    curr[enums[i]] = unescape(line)
-    i = i + 1
-  elseif (i == 5) then
-    i = 0
-    table.insert(list, curr)
-    print(string.format("Parsing VGM %d", count))
-    count = count + 1
-  else
-    curr[enums[i]] = unescape(line)
-    i = i + 1
-  end
+local raw, err = grep_table(read_file(temp_file))
+if (not raw) then
+  print("Failed to parse content: "..err)
+  os.exit(1)
 end
 
+local list = {}
+local parser = coroutine.create(function(first)
+  local line = first
+  while (true) do
+    local curr = {}
+    curr.dni = line
+    line = coroutine.yield()
+
+    local names = line:gmatch("[^,]+")
+    curr.apellido = unescape(names())
+    curr.nombre = unescape(names()):sub(2)
+    line = coroutine.yield()
+
+    curr.fuerza = unescape(line)
+    line = coroutine.yield()
+
+    curr.grado = unescape(line)
+    line = coroutine.yield()
+
+    curr.condicion = unescape(line)
+    line = coroutine.yield()
+
+    curr.vive = (line == "SI")
+    table.insert(list, curr)
+    line = coroutine.yield()
+  end
+end)
+
+for line in raw:gmatch("[^\n]+") do
+  coroutine.resume(parser, line)
+end
+
+-- print(inspect(list))
 assert(write_json(out_file, list))
-print("Done!")
+print(string.format("Parsed %d VGMs!", #list))
